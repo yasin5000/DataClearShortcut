@@ -28,7 +28,7 @@ class AutoClearService : AccessibilityService() {
         private const val STEP_CLEAR = 1
         private const val STEP_CONFIRM = 2
 
-        private const val TIMEOUT_MS = 15_000L
+        private const val TIMEOUT_MS = 20_000L
         private const val TICK_MS = 350L
 
         // "Clear data" button
@@ -39,6 +39,15 @@ class AutoClearService : AccessibilityService() {
 
         // "Storage & cache" row
         private val STORAGE_WORDS = listOf("storage", "স্টোরেজ")
+
+        // App-er nijer "Storage" page-er CLEAR button (exact match), jemon Facebook Lite
+        private val APP_CLEAR_WORDS = listOf("clear", "মুছুন")
+
+        // App-er nijer page-er "Accounts and settings" checkbox (logout-shoho sob muchte)
+        private val ACCOUNTS_WORDS = listOf("accounts and settings")
+
+        // App-er nijer "Clear profiles and settings?" dialog-er OK button (exact match)
+        private val APP_OK_WORDS = listOf("ok", "ঠিক আছে")
 
         // Confirm dialog button (exact match)
         private val CONFIRM_WORDS = listOf(
@@ -52,6 +61,9 @@ class AutoClearService : AccessibilityService() {
     private var step = STEP_STORAGE
     private var deadline = 0L
     private var visitedStorage = false
+    private var manageSpace = false
+    private var accountsTicked = false
+    private var clearPressed = false
 
     private val tick = object : Runnable {
         override fun run() {
@@ -61,8 +73,13 @@ class AutoClearService : AccessibilityService() {
                 return
             }
             val root = rootInActiveWindow
-            if (root != null && isSettingsWindow(root.packageName?.toString())) {
-                process(root)
+            if (root != null) {
+                val wp = root.packageName?.toString()
+                if (isSettingsWindow(wp)) {
+                    process(root)
+                } else if (step == STEP_CONFIRM && wp != null && wp == pkg) {
+                    processAppPage(root)
+                }
             }
             if (pkg != null) handler.postDelayed(this, TICK_MS)
         }
@@ -85,6 +102,9 @@ class AutoClearService : AccessibilityService() {
         pkg = p
         step = STEP_STORAGE
         visitedStorage = false
+        manageSpace = false
+        accountsTicked = false
+        clearPressed = false
         deadline = System.currentTimeMillis() + TIMEOUT_MS
         handler.removeCallbacks(tick)
         handler.postDelayed(tick, 700)
@@ -151,6 +171,68 @@ class AutoClearService : AccessibilityService() {
         return false
     }
 
+    // Facebook Lite-er moto app-er nijer "Clear Storage" page-e CLEAR chapo
+    private fun processAppPage(root: AccessibilityNodeInfo) {
+        manageSpace = true
+
+        // 3) CLEAR chapar por "Clear profiles and settings?" dialog-e OK chapo
+        if (clearPressed) {
+            if (clickAppOk(root)) {
+                finishJob(true, "Data clear hoyeche (logout hoye gese)")
+            }
+            return
+        }
+
+        // 1) Age "Accounts and settings" tick koro
+        if (!accountsTicked) {
+            if (clickAccounts(root)) accountsTicked = true
+            return
+        }
+
+        // 2) Tarpor CLEAR chapo
+        if (clickAppClear(root)) clearPressed = true
+    }
+
+    private fun clickAccounts(root: AccessibilityNodeInfo): Boolean {
+        for (n in findNodes(root, ACCOUNTS_WORDS)) {
+            val t = nodeLabel(n)?.lowercase() ?: continue
+            if (ACCOUNTS_WORDS.none { t.contains(it) }) continue
+            val c = clickableAncestor(n)
+            if (c != null && c.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+            if (n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        }
+        return false
+    }
+
+    private fun clickAppOk(root: AccessibilityNodeInfo): Boolean {
+        val b1 = root.findAccessibilityNodeInfosByViewId("android:id/button1")
+            ?.firstOrNull { it.isEnabled }
+        if (b1 != null) return b1.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+
+        for (n in findNodes(root, APP_OK_WORDS)) {
+            val t = nodeLabel(n)?.trim()?.lowercase() ?: continue
+            if (t !in APP_OK_WORDS) continue
+            val c = clickableAncestor(n)
+            if (c != null && c.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+            if (n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        }
+        return false
+    }
+
+    private fun clickAppClear(root: AccessibilityNodeInfo): Boolean {
+        for (n in findNodes(root, APP_CLEAR_WORDS)) {
+            val t = nodeLabel(n)?.trim()?.lowercase() ?: continue
+            if (t !in APP_CLEAR_WORDS) continue
+            val c = clickableAncestor(n)
+            if (c != null && c.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+            if (n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        }
+        return false
+    }
+
+    private fun nodeLabel(n: AccessibilityNodeInfo): String? =
+        (n.text ?: n.contentDescription)?.toString()
+
     private fun findNodes(root: AccessibilityNodeInfo, words: List<String>): List<AccessibilityNodeInfo> {
         val out = ArrayList<AccessibilityNodeInfo>()
         for (w in words) {
@@ -176,9 +258,10 @@ class AutoClearService : AccessibilityService() {
         Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
         if (ok) {
             // Settings theke back diye amader app-e phire jao
-            val backs = if (visitedStorage) 2 else 1
+            val backs = (if (visitedStorage) 2 else 1) + (if (manageSpace) 1 else 0)
+            val gap = if (manageSpace) 800L else 500L
             for (i in 1..backs) {
-                handler.postDelayed({ performGlobalAction(GLOBAL_ACTION_BACK) }, 500L * i)
+                handler.postDelayed({ performGlobalAction(GLOBAL_ACTION_BACK) }, gap * i)
             }
         }
     }
