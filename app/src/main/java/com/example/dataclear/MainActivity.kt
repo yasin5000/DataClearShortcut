@@ -98,7 +98,7 @@ class MainActivity : Activity() {
             setPadding(dp(4), dp(8), dp(4), 0)
         }
         val search = EditText(this).apply {
-            hint = "App khujo..."
+            this.hint = "App khujo..."
             setSingleLine()
         }
         val list = ListView(this)
